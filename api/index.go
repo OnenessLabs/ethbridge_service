@@ -1,4 +1,4 @@
-package main
+package api
 
 import (
 	"context"
@@ -19,6 +19,8 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/joho/godotenv"
+
+	"bridge/lib"
 )
 
 type Message struct {
@@ -122,7 +124,7 @@ func callBridge(m Message) error {
 	auth.GasLimit = uint64(0)  // in units
 	auth.GasPrice = gasPrice
 
-	originInstance, err := NewMeson(originMesonAddr, originClient)
+	originInstance, err := lib.NewMeson(originMesonAddr, originClient)
 
 	fmt.Println(originInstance, err)
 
@@ -153,7 +155,7 @@ func callBridge(m Message) error {
 	auth.GasLimit = uint64(0)  // in units
 	auth.GasPrice = targetGasPrice
 
-	targetInstance, err := NewMeson(targetMesonAddr, targetClient)
+	targetInstance, err := lib.NewMeson(targetMesonAddr, targetClient)
 	swaptx, err := targetInstance.ExecuteSwap(auth, encodedSwap, r, vs, recipient, true)
 	if err != nil {
 		log.Println(err)
@@ -176,17 +178,17 @@ func goDotEnvVariable(key string) string {
 	return os.Getenv(key)
 }
 
-func main() {
-	// callBridge()
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", Handler)
+// func main() {
+// 	// callBridge()
+// 	mux := http.NewServeMux()
+// 	mux.HandleFunc("/", Handler)
 
-	err := http.ListenAndServe(":3333", mux)
-	if errors.Is(err, http.ErrServerClosed) {
-		fmt.Printf("server closed\n")
-	} else if err != nil {
-		fmt.Printf("error starting server: %s\n", err)
-		os.Exit(1)
-	}
+// 	err := http.ListenAndServe(":3333", mux)
+// 	if errors.Is(err, http.ErrServerClosed) {
+// 		fmt.Printf("server closed\n")
+// 	} else if err != nil {
+// 		fmt.Printf("error starting server: %s\n", err)
+// 		os.Exit(1)
+// 	}
 
-}
+// }

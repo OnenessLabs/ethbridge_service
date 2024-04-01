@@ -1,0 +1,8 @@
+{
+  "scripts": {
+    "serve": "vercel dev"
+  },
+  "devDependencies": {
+    "vercel": "^33.6.2"
+  }
+}
