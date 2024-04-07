@@ -54,8 +54,29 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 }
 
+func getAuth(client *ethclient.Client, fromAddress common.Address, privateKey *ecdsa.PrivateKey) (*bind.TransactOpts, error) {
+	targetNonce, err := client.PendingNonceAt(context.Background(), fromAddress)
+	if err != nil {
+		log.Println(err)
+		return nil, err
+	}
+
+	targetGasPrice, err := client.SuggestGasPrice(context.Background())
+	if err != nil {
+		log.Println(err)
+		return nil, err
+	}
+
+	auth := bind.NewKeyedTransactor(privateKey)
+	auth.Nonce = big.NewInt(int64(targetNonce))
+	auth.Value = big.NewInt(0) // in wei
+	auth.GasLimit = uint64(0)  // in units
+	auth.GasPrice = targetGasPrice
+	return auth, nil
+}
+
 func callBridge(m Message) error {
-	targetMesonAddr := common.HexToAddress("0x244Bb9e8D1d1b2B73182D594B87691eD8708105e")
+	targetMesonAddr := common.HexToAddress("0x4f0F26939BB50611124274E2051c42825130a1E8")
 
 	targetClient, err := ethclient.Dial("https://rpc.devnet.onenesslabs.io")
 	if err != nil {
@@ -63,12 +84,19 @@ func callBridge(m Message) error {
 		return err
 	}
 
-	originMesonAddr := common.HexToAddress("0x0d12d15b26a32e72A3330B2ac9016A22b1410CB6")
+	originMesonAddr := common.HexToAddress("0x483c1FE0E455912A69De699DC967b6d0E1e4f94a")
 	originClient, err := ethclient.Dial("https://sepolia.drpc.org")
 	if err != nil {
 		log.Println(err)
 		return err
 	}
+
+	originInstance, err := lib.NewMeson(originMesonAddr, originClient)
+	// log.Printf("originInstance %s error:%s\n", originInstance, err)
+	_ = originInstance
+
+	targetInstance, err := lib.NewMeson(targetMesonAddr, targetClient)
+	// log.Printf("targetInstance %s error:%s\n", targetInstance, err)
 
 	_ = targetClient
 
@@ -104,65 +132,53 @@ func callBridge(m Message) error {
 	recipient := common.HexToAddress(m.Recipient)
 	initiator := common.HexToAddress(m.Initiator)
 
-	//send tx to origin chain
-
-	nonce, err := originClient.PendingNonceAt(context.Background(), fromAddress)
+	// send lockswap to target chain
+	auth, err := getAuth(targetClient, fromAddress, privateKey)
 	if err != nil {
 		log.Println(err)
 		return err
 	}
 
-	gasPrice, err := originClient.SuggestGasPrice(context.Background())
+	lockTx, err := targetInstance.LockSwap(auth, encodedSwap, initiator)
+	if err != nil {
+		log.Printf("lockTx error: %s\n", err)
+		return err
+	}
+
+	log.Printf("lockTx %s", lockTx.Hash().Hex())
+
+	//send release tx to target chain
+
+	auth, err = getAuth(targetClient, fromAddress, privateKey)
 	if err != nil {
 		log.Println(err)
 		return err
 	}
 
-	auth := bind.NewKeyedTransactor(privateKey)
-	auth.Nonce = big.NewInt(int64(nonce))
-	auth.Value = big.NewInt(0) // in wei
-	auth.GasLimit = uint64(0)  // in units
-	auth.GasPrice = gasPrice
-
-	originInstance, err := lib.NewMeson(originMesonAddr, originClient)
-
-	fmt.Println(originInstance, err)
-
-	releaseTx, err := originInstance.DirectRelease(auth, encodedSwap, r, vs, recipient, initiator)
+	releaseTx, err := targetInstance.Release(auth, encodedSwap, r, vs, initiator, recipient)
 	if err != nil {
-		log.Println(err)
+		log.Printf("releaseTx error: %s\n", err)
 		return err
 	}
 
 	fmt.Printf("releaseTx sent: %s", releaseTx.Hash().Hex())
 
-	//send tx to target chain
-	targetNonce, err := targetClient.PendingNonceAt(context.Background(), fromAddress)
+	//send executeSwap tx to origin chain
+
+	auth, err = getAuth(originClient, fromAddress, privateKey)
 	if err != nil {
 		log.Println(err)
 		return err
 	}
 
-	targetGasPrice, err := targetClient.SuggestGasPrice(context.Background())
+	executeSwapTx, err := originInstance.DirectExecuteSwap(auth, encodedSwap, r, vs, initiator, recipient)
 	if err != nil {
-		log.Println(err)
+		log.Printf("executeSwap error: %s\n", err)
 		return err
 	}
 
-	auth = bind.NewKeyedTransactor(privateKey)
-	auth.Nonce = big.NewInt(int64(targetNonce))
-	auth.Value = big.NewInt(0) // in wei
-	auth.GasLimit = uint64(0)  // in units
-	auth.GasPrice = targetGasPrice
+	fmt.Printf("executeSwap sent: %s", executeSwapTx.Hash().Hex())
 
-	targetInstance, err := lib.NewMeson(targetMesonAddr, targetClient)
-	swaptx, err := targetInstance.ExecuteSwap(auth, encodedSwap, r, vs, recipient, true)
-	if err != nil {
-		log.Println(err)
-		return err
-	}
-
-	fmt.Printf("swaptx sent: %s", swaptx.Hash().Hex())
 	return nil
 }
 
