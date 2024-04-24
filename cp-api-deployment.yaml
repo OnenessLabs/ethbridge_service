@@ -1,0 +1,39 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    kompose.cmd: /usr/local/bin/kompose convert -f docker-compose.yml
+    kompose.version: 1.26.0 (40646f47)
+  creationTimestamp: null
+  labels:
+    io.kompose.service: cp-api
+  name: cp-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      io.kompose.service: cp-api
+  strategy: {}
+  template:
+    metadata:
+      annotations:
+        kompose.cmd: /usr/local/bin/kompose convert -f docker-compose.yml
+        kompose.version: 1.26.0 (40646f47)
+      creationTimestamp: null
+      labels:
+        io.kompose.service: cp-api
+    spec:
+      containers:
+        - args:
+            - /main
+          image: 035018483734.dkr.ecr.ap-south-1.amazonaws.com/cp-api:latest
+          name: cp-api
+          ports:
+            - containerPort: 3333
+          resources:
+            requests:
+              cpu: "2"
+              memory: "1073741824"
+          workingDir: /app
+      restartPolicy: Always
+status: {}

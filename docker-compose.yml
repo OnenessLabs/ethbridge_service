@@ -1,0 +1,19 @@
+version: '3.5'
+
+services:
+  cp-api:
+    image:
+      035018483734.dkr.ecr.ap-south-1.amazonaws.com/cp-api:latest
+      # cp-image:latest
+    deploy:
+      resources:
+        reservations:
+          memory: "1G"
+          cpus: "2"
+    working_dir: /app
+    ports:
+      - "8000:3333"
+    command: /main
+
+  
+  
