@@ -53,15 +53,23 @@ func ToWei(iamount interface{}, decimals int) *big.Int {
 }
 
 func AirdropCPToken(w http.ResponseWriter, r *http.Request) {
+	claimRet := TxStatus{
+		Status:  1,
+		TokenId: 0,
+		TxHash:  "",
+		Err:     ""}
 	q := r.URL.Query()
 	tokenAddress := common.HexToAddress(q.Get("token"))
 	toAddress := common.HexToAddress(q.Get("to"))
 	amount := q.Get("amount")
-	fmt.Printf("tokenAddress:%s toAddress:%s amount:%s", tokenAddress, toAddress, amount)
+	fmt.Printf("tokenAddress:%s toAddress:%s amount:%s\n", tokenAddress, toAddress, amount)
 	targetClient, err := ethclient.Dial("https://rpc.devnet.onenesslabs.io")
 	if err != nil {
 		log.Println(err)
-		fmt.Fprintf(w, err.Error())
+
+		claimRet.Err = err.Error()
+		jsonStr, _ := json.Marshal(claimRet)
+		fmt.Fprintf(w, string(jsonStr))
 		return
 	}
 
@@ -70,7 +78,9 @@ func AirdropCPToken(w http.ResponseWriter, r *http.Request) {
 	privateKey, err := crypto.HexToECDSA(goDotEnvVariable("PRIVATE_KEY"))
 	if err != nil {
 		log.Println(err)
-		fmt.Fprintf(w, err.Error())
+		claimRet.Err = err.Error()
+		jsonStr, _ := json.Marshal(claimRet)
+		fmt.Fprintf(w, string(jsonStr))
 		return
 	}
 
@@ -78,7 +88,10 @@ func AirdropCPToken(w http.ResponseWriter, r *http.Request) {
 	publicKeyECDSA, ok := publicKey.(*ecdsa.PublicKey)
 	if !ok {
 		log.Println("cannot assert type: publicKey is not of type *ecdsa.PublicKey")
-		fmt.Fprintf(w, "annot assert type: publicKey is not of type *ecdsa.PublicKey")
+
+		claimRet.Err = "cannot assert type: publicKey is not of type *ecdsa.PublicKey"
+		jsonStr, _ := json.Marshal(claimRet)
+		fmt.Fprintf(w, string(jsonStr))
 		return
 
 	}
@@ -89,20 +102,30 @@ func AirdropCPToken(w http.ResponseWriter, r *http.Request) {
 	auth, err := getAuth(targetClient, fromAddress, privateKey)
 	if err != nil {
 		log.Println(err)
-		fmt.Fprintf(w, err.Error())
+
+		claimRet.Err = err.Error()
+		jsonStr, _ := json.Marshal(claimRet)
+		fmt.Fprintf(w, string(jsonStr))
 		return
 	}
 	amountWei := ToWei(amount, 18)
 	mintTx, err := targetInstance.Mint(auth, toAddress, amountWei)
 	if err != nil {
 		log.Printf("mint error: %s\n", err)
-		fmt.Fprintf(w, err.Error())
+		claimRet.Err = err.Error()
+		jsonStr, _ := json.Marshal(claimRet)
+		fmt.Fprintf(w, string(jsonStr))
 		return
 	}
 
 	log.Printf("mint %s", mintTx.Hash().Hex())
 
-	fmt.Fprintf(w, "success")
+	claimRet.Status = 0
+	claimRet.TxHash = mintTx.Hash().Hex()
+	claimRet.TokenId = 0
+	jsonStr, err := json.Marshal(claimRet)
+	fmt.Fprintf(w, string(jsonStr))
+	return
 }
 
 func GetReceipt(w http.ResponseWriter, r *http.Request) {
