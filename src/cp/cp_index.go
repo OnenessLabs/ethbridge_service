@@ -10,12 +10,12 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/shopspring/decimal"
@@ -27,6 +27,9 @@ type Message2 struct {
 	Recipient   string
 	Initiator   string
 }
+
+const rpcEndpoint = "https://rpc.devnet.onenesslabs.io"
+const AttemptLimit = 3
 
 func ToWei(iamount interface{}, decimals int) *big.Int {
 	amount := decimal.NewFromFloat(0)
@@ -63,7 +66,7 @@ func AirdropCPToken(w http.ResponseWriter, r *http.Request) {
 	toAddress := common.HexToAddress(q.Get("to"))
 	amount := q.Get("amount")
 	fmt.Printf("tokenAddress:%s toAddress:%s amount:%s\n", tokenAddress, toAddress, amount)
-	targetClient, err := ethclient.Dial("https://rpc.devnet.onenesslabs.io")
+	targetClient, err := ethclient.Dial(rpcEndpoint)
 	if err != nil {
 		log.Println(err)
 
@@ -120,68 +123,104 @@ func AirdropCPToken(w http.ResponseWriter, r *http.Request) {
 
 	log.Printf("mint %s", mintTx.Hash().Hex())
 
-	claimRet.Status = 0
-	claimRet.TxHash = mintTx.Hash().Hex()
-	claimRet.TokenId = 0
+	for i := 1; i <= AttemptLimit; i++ {
+		time.Sleep(time.Second * 2)
+		claimRet = getReceiptByTxhash(mintTx.Hash().Hex(), false)
+		if claimRet.Status == 0 {
+			break
+		}
+	}
+
 	jsonStr, err := json.Marshal(claimRet)
 	fmt.Fprintf(w, string(jsonStr))
 	return
 }
 
-func GetReceipt(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	txHashArg := q.Get("txhash")
-	targetClient, err := ethclient.Dial("https://rpc.devnet.onenesslabs.io")
+func getReceiptByTxhash(txhash string, is721 bool) TxStatus {
+	ret := TxStatus{
+		Status:  1,
+		TokenId: 0,
+		TxHash:  txhash,
+		Err:     ""}
+
+	targetClient, err := ethclient.Dial(rpcEndpoint)
 	if err != nil {
 		log.Println(err)
-		fmt.Fprintf(w, err.Error())
-		return
+		ret.Err = err.Error()
+		return ret
 	}
-	_txHash := common.HexToHash(txHashArg)
+
+	_txHash := common.HexToHash(txhash)
 	receipt, err := targetClient.TransactionReceipt(context.Background(), _txHash)
 
 	if err != nil {
 		log.Println(err)
-		fmt.Fprintf(w, err.Error())
-		return
+		ret.Err = err.Error()
+		return ret
 	}
 
-	logTransferSig := []byte("Transfer(address,address,uint256)")
-	logTransferSigHash := crypto.Keccak256Hash(logTransferSig)
+	if is721 {
 
-	contractAbi, err := abi.JSON(strings.NewReader(string(SBTERC721ABI)))
-	if err != nil {
-		log.Fatal(err)
-	}
-	// bigInt := new(big.Int)
-	var tokenId = new(big.Int)
-	for _, vLog := range receipt.Logs {
-		// log.Printf("%"vLog)
-		log.Printf("event SigHash:%s %s", vLog.Topics[0].Hex(), logTransferSigHash.Hex())
-		switch vLog.Topics[0].Hex() {
-		case logTransferSigHash.Hex():
-			var transferEvent EventTransfer
-			err := contractAbi.UnpackIntoInterface(&transferEvent, "Transfer", vLog.Data)
-			if err != nil {
-				log.Fatal(err)
-			}
+		logTransferSig := []byte("Transfer(address,address,uint256)")
+		logTransferSigHash := crypto.Keccak256Hash(logTransferSig)
 
-			transferEvent.from = common.HexToAddress(vLog.Topics[1].Hex())
-			transferEvent.to = common.HexToAddress(vLog.Topics[2].Hex())
-			// log.Printf(string(vLog.Topics[3].Hex()))
-			_, isSuccess := tokenId.SetString(string(vLog.Topics[3].Hex())[2:], 16)
-			if isSuccess {
-				log.Printf(tokenId.String())
-			}
+		var contractAbi abi.ABI
+		contractAbi, err = abi.JSON(strings.NewReader(string(SBTERC721ABI)))
 
-			// tokenId = common.S256(transferEvent.TokenId)
-			fmt.Println(transferEvent.from.Hex()) // foo
-			fmt.Println(transferEvent.to.Hex())
-			// fmt.Println(transferEvent.TokenId.Uint64())
+		if err != nil {
+			log.Println(err)
+			ret.Err = err.Error()
+			return ret
 		}
+
+		var tokenId = new(big.Int)
+		for _, vLog := range receipt.Logs {
+			// log.Printf("%"vLog)
+			log.Printf("event SigHash:%s %s", vLog.Topics[0].Hex(), logTransferSigHash.Hex())
+			switch vLog.Topics[0].Hex() {
+			case logTransferSigHash.Hex():
+				var transferEvent EventTransfer
+				err := contractAbi.UnpackIntoInterface(&transferEvent, "Transfer", vLog.Data)
+				if err != nil {
+					debug.PrintStack()
+					log.Println(err)
+					ret.Err = err.Error()
+					return ret
+				}
+
+				transferEvent.from = common.HexToAddress(vLog.Topics[1].Hex())
+				transferEvent.to = common.HexToAddress(vLog.Topics[2].Hex())
+				// log.Printf(string(vLog.Topics[3].Hex()))
+
+				_, isSuccess := tokenId.SetString(string(vLog.Topics[3].Hex())[2:], 16)
+				if isSuccess {
+					log.Printf(tokenId.String())
+					ret.Status = 0
+					ret.TokenId = uint(tokenId.Int64())
+					return ret
+				} else {
+					ret.Err = "uint256 parse err"
+					return ret
+				}
+			}
+		}
+		return ret
+	} else {
+		ret.Status = 0
+		return ret
 	}
 
-	fmt.Fprintf(w, tokenId.String())
+}
+
+func GetReceipt(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	txHashArg := q.Get("txhash")
+	// is721 := q.Get("is721")
+	// is721Bool, _ := strconv.ParseBool(is721)
+	receiptRet := getReceiptByTxhash(txHashArg, true)
+	jsonStr, _ := json.Marshal(receiptRet)
+	fmt.Fprintf(w, string(jsonStr))
+	return
 
 }
 
@@ -203,7 +242,7 @@ func ClaimSBT(w http.ResponseWriter, r *http.Request) {
 	tokenAddress := common.HexToAddress(q.Get("token"))
 	toAddress := common.HexToAddress(q.Get("to"))
 	fmt.Printf("claimSBT tokenAddress:%s toAddress:%s", tokenAddress, toAddress)
-	targetClient, err := ethclient.Dial("https://rpc.devnet.onenesslabs.io")
+	targetClient, err := ethclient.Dial(rpcEndpoint)
 	if err != nil {
 		log.Println(err)
 
@@ -258,9 +297,20 @@ func ClaimSBT(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log.Printf("claimSBT %s", mintTx.Hash().Hex())
-	AttemptLimit := 3
 
-	var receipt *types.Receipt
+	for i := 1; i <= AttemptLimit; i++ {
+		time.Sleep(time.Second * 2)
+		claimRet = getReceiptByTxhash(mintTx.Hash().Hex(), true)
+		if claimRet.Status == 0 {
+			break
+		}
+	}
+
+	jsonStr, err := json.Marshal(claimRet)
+	fmt.Fprintf(w, string(jsonStr))
+	return
+
+	/*var receipt *types.Receipt
 
 	isSuccess := false
 	for i := 1; i <= AttemptLimit; i++ {
@@ -336,7 +386,7 @@ func ClaimSBT(w http.ResponseWriter, r *http.Request) {
 	jsonStr, err := json.Marshal(claimRet)
 	// log.Printf("err:%s json:%s", err, jsonStr)
 	fmt.Fprintf(w, string(jsonStr))
-	return
+	return*/
 }
 
 type EventTransfer struct {
