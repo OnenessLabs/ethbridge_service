@@ -28,28 +28,62 @@ type Message struct {
 	Sign        string
 	Recipient   string
 	Initiator   string
+	TargetChain string
 }
 
+type HttpResponse struct {
+	// 0. SUCCESS 1.ERROR 2.PENDING
+	Status int    `json:"status"`
+	Err    string `json:"err"`
+}
+
+const (
+	ONE_MESON string = "0x4f0F26939BB50611124274E2051c42825130a1E8"
+	ETH_MESON string = "0x483c1FE0E455912A69De699DC967b6d0E1e4f94a"
+
+	ONE_RPC string = "https://rpc.devnet.onenesslabs.io"
+	ETH_RPC string = "https://sepolia.drpc.org"
+)
+
 func Handler(w http.ResponseWriter, r *http.Request) {
+	response := HttpResponse{
+		Status: 1,
+		Err:    "",
+	}
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
-		// fmt.Printf("could not read body: %s\n", err)
-		fmt.Fprintf(w, "not found param")
+		log.Println("not found param, body:", r.Body)
+
+		response.Err = "not found param"
+		jsonStr, _ := json.Marshal(response)
+		fmt.Fprintf(w, string(jsonStr))
 		return
 	}
 	var m Message
 	err = json.Unmarshal(body, &m)
 	if err != nil {
+		log.Println("unmarshal body fail:", body)
 
-		fmt.Fprintf(w, "unmarshal body fail")
+		response.Err = "unmarshal body fail"
+		jsonStr, _ := json.Marshal(response)
+		fmt.Fprintf(w, string(jsonStr))
 		return
 	}
-	fmt.Println(m)
+	log.Printf("param:%+v\n", m)
 	err = callBridge(m)
 	if err != nil {
-		fmt.Fprintf(w, "fail")
+		log.Println("callBridge error:", err.Error())
+
+		response.Err = err.Error()
+		jsonStr, _ := json.Marshal(response)
+		fmt.Fprintf(w, string(jsonStr))
+		return
+
 	} else {
-		fmt.Fprintf(w, "success")
+		response.Status = 0
+		jsonStr, _ := json.Marshal(response)
+		fmt.Fprintf(w, string(jsonStr))
+		return
 	}
 
 }
@@ -76,33 +110,46 @@ func getAuth(client *ethclient.Client, fromAddress common.Address, privateKey *e
 }
 
 func callBridge(m Message) error {
-	targetMesonAddr := common.HexToAddress("0x4f0F26939BB50611124274E2051c42825130a1E8")
+	var targetMesonAddr string
 
-	targetClient, err := ethclient.Dial("https://rpc.devnet.onenesslabs.io")
+	var targetRpcUrl string
+	var originMesonAddr string
+	var originRpcUrl string
+	if m.TargetChain == "eth" {
+		targetMesonAddr = ETH_MESON
+		targetRpcUrl = ETH_RPC
+		originMesonAddr = ONE_MESON
+		originRpcUrl = ONE_RPC
+	} else {
+		targetMesonAddr = ONE_MESON
+		targetRpcUrl = ONE_RPC
+
+		originMesonAddr = ETH_MESON
+		originRpcUrl = ETH_RPC
+	}
+
+	_ = originMesonAddr
+	_ = originRpcUrl
+
+	targetMeson := common.HexToAddress(targetMesonAddr)
+
+	targetClient, err := ethclient.Dial(targetRpcUrl)
 	if err != nil {
-		log.Println(err)
+		log.Println("connect target rpc:", err, targetRpcUrl)
 		return err
 	}
 
-	originMesonAddr := common.HexToAddress("0x483c1FE0E455912A69De699DC967b6d0E1e4f94a")
-	originClient, err := ethclient.Dial("https://sepolia.drpc.org")
+	targetInstance, err := lib.NewMeson(targetMeson, targetClient)
 	if err != nil {
-		log.Println(err)
+		log.Println("new Meson:", err)
 		return err
 	}
-
-	originInstance, err := lib.NewMeson(originMesonAddr, originClient)
-	// log.Printf("originInstance %s error:%s\n", originInstance, err)
-	_ = originInstance
-
-	targetInstance, err := lib.NewMeson(targetMesonAddr, targetClient)
-	// log.Printf("targetInstance %s error:%s\n", targetInstance, err)
 
 	_ = targetClient
 
 	privateKey, err := crypto.HexToECDSA(goDotEnvVariable("PRIVATE_KEY"))
 	if err != nil {
-		log.Println(err)
+		log.Println("get prikey:", err)
 		return err
 	}
 
@@ -135,23 +182,23 @@ func callBridge(m Message) error {
 	// send lockswap to target chain
 	auth, err := getAuth(targetClient, fromAddress, privateKey)
 	if err != nil {
-		log.Println(err)
+		log.Println("NewKeyedTransactor:", err)
 		return err
 	}
 
 	lockTx, err := targetInstance.LockSwap(auth, encodedSwap, initiator)
 	if err != nil {
-		log.Printf("lockTx error: %s\n", err)
+		log.Println("LockSwap error:", err)
 		return err
 	}
 
-	log.Printf("lockTx %s", lockTx.Hash().Hex())
+	log.Printf("LockSwap %s", lockTx.Hash().Hex())
 
 	//send release tx to target chain
 
 	auth, err = getAuth(targetClient, fromAddress, privateKey)
 	if err != nil {
-		log.Println(err)
+		log.Println("NewKeyedTransactor:", err)
 		return err
 	}
 
@@ -161,9 +208,20 @@ func callBridge(m Message) error {
 		return err
 	}
 
-	fmt.Printf("releaseTx sent: %s", releaseTx.Hash().Hex())
+	log.Println("releaseTx sent: %s", releaseTx.Hash().Hex())
 
 	//send executeSwap tx to origin chain
+
+	/*originMeson := common.HexToAddress(originMesonAddr)
+	originClient, err := ethclient.Dial(originRpcUrl)
+	if err != nil {
+		log.Println(err)
+		return err
+	}
+
+	originInstance, err := lib.NewMeson(originMeson, originClient)
+	// log.Printf("originInstance %s error:%s\n", originInstance, err)
+	_ = originInstance
 
 	auth, err = getAuth(originClient, fromAddress, privateKey)
 	if err != nil {
@@ -177,7 +235,7 @@ func callBridge(m Message) error {
 		return err
 	}
 
-	fmt.Printf("executeSwap sent: %s", executeSwapTx.Hash().Hex())
+	fmt.Printf("executeSwap sent: %s", executeSwapTx.Hash().Hex())*/
 
 	return nil
 }
