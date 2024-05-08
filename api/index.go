@@ -70,6 +70,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("param:%+v\n", m)
+
 	err = callBridge(m)
 	if err != nil {
 		log.Println("callBridge error:", err.Error())
@@ -246,7 +247,7 @@ func goDotEnvVariable(key string) string {
 	err := godotenv.Load(".env")
 
 	if err != nil {
-		log.Fatalf("Error loading .env file")
+		log.Println("Error loading .env file")
 	}
 
 	return os.Getenv(key)
