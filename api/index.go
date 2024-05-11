@@ -193,7 +193,7 @@ func callBridge(m Message) error {
 		return err
 	}
 
-	log.Printf("LockSwap %s", lockTx.Hash().Hex())
+	log.Printf("LockSwap %s\n", lockTx.Hash().Hex())
 
 	//send release tx to target chain
 
@@ -209,11 +209,11 @@ func callBridge(m Message) error {
 		return err
 	}
 
-	log.Println("releaseTx sent: %s", releaseTx.Hash().Hex())
+	log.Printf("releaseTx sent: %s\n", releaseTx.Hash().Hex())
 
 	//send executeSwap tx to origin chain
 
-	/*originMeson := common.HexToAddress(originMesonAddr)
+	originMeson := common.HexToAddress(originMesonAddr)
 	originClient, err := ethclient.Dial(originRpcUrl)
 	if err != nil {
 		log.Println(err)
@@ -236,7 +236,7 @@ func callBridge(m Message) error {
 		return err
 	}
 
-	fmt.Printf("executeSwap sent: %s", executeSwapTx.Hash().Hex())*/
+	fmt.Printf("executeSwap sent: %s\n", executeSwapTx.Hash().Hex())
 
 	return nil
 }
