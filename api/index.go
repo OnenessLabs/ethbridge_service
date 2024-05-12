@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -37,12 +38,15 @@ type HttpResponse struct {
 	Err    string `json:"err"`
 }
 
+const AttemptLimit = 3
 const (
-	ONE_MESON string = "0x4f0F26939BB50611124274E2051c42825130a1E8"
-	ETH_MESON string = "0x483c1FE0E455912A69De699DC967b6d0E1e4f94a"
+	ONE_MESON   string = "0x4f0F26939BB50611124274E2051c42825130a1E8"
+	ETH_MESON   string = "0x483c1FE0E455912A69De699DC967b6d0E1e4f94a"
+	ETH_CHAINID int    = 11155111
 
-	ONE_RPC string = "https://rpc.devnet.onenesslabs.io"
-	ETH_RPC string = "https://sepolia.drpc.org"
+	ONE_RPC     string = "https://rpc.devnet.onenesslabs.io"
+	ETH_RPC     string = "https://ethereum-sepolia-rpc.publicnode.com"
+	ONE_CHAINID int    = 123666
 )
 
 func Handler(w http.ResponseWriter, r *http.Request) {
@@ -89,7 +93,7 @@ func Handler(w http.ResponseWriter, r *http.Request) {
 
 }
 
-func getAuth(client *ethclient.Client, fromAddress common.Address, privateKey *ecdsa.PrivateKey) (*bind.TransactOpts, error) {
+func getAuth(client *ethclient.Client, fromAddress common.Address, privateKey *ecdsa.PrivateKey, chainId *big.Int) (*bind.TransactOpts, error) {
 	targetNonce, err := client.PendingNonceAt(context.Background(), fromAddress)
 	if err != nil {
 		log.Println(err)
@@ -101,7 +105,7 @@ func getAuth(client *ethclient.Client, fromAddress common.Address, privateKey *e
 		log.Println(err)
 		return nil, err
 	}
-	chainId := new(big.Int).SetUint64(uint64(123666))
+	log.Println("chainId:", chainId)
 	auth, err := bind.NewKeyedTransactorWithChainID(privateKey, chainId)
 	if err != nil {
 		log.Println("NewKeyedTransactorWithChainID error:", err)
@@ -114,23 +118,59 @@ func getAuth(client *ethclient.Client, fromAddress common.Address, privateKey *e
 	return auth, nil
 }
 
+func getReceiptByTxhash(txhash string, rpcclient *ethclient.Client) bool {
+
+	_txHash := common.HexToHash(txhash)
+	receipt, err := rpcclient.TransactionReceipt(context.Background(), _txHash)
+
+	if err != nil {
+		log.Printf("TransactionReceipt: %s\n", err)
+		return false
+	}
+	log.Printf("txhash:%s receipt:%s\n", txhash, receipt)
+	return true
+
+}
+
+func checkTx(txhash string, rpcClient *ethclient.Client) bool {
+
+	for i := 1; i <= AttemptLimit; i++ {
+		time.Sleep(time.Second * 3)
+		ok := getReceiptByTxhash(txhash, rpcClient)
+		if ok {
+			return true
+		}
+	}
+	return false
+}
+
 func callBridge(m Message) error {
 	var targetMesonAddr string
 
 	var targetRpcUrl string
 	var originMesonAddr string
 	var originRpcUrl string
+	var originChainId *big.Int
+	var targetChainId *big.Int
 	if m.TargetChain == "eth" {
 		targetMesonAddr = ETH_MESON
 		targetRpcUrl = ETH_RPC
+		targetChainId = new(big.Int).SetUint64(uint64(ETH_CHAINID))
+		_ = targetChainId
+
 		originMesonAddr = ONE_MESON
 		originRpcUrl = ONE_RPC
+		originChainId = new(big.Int).SetUint64(uint64(ETH_CHAINID))
+
 	} else {
 		targetMesonAddr = ONE_MESON
 		targetRpcUrl = ONE_RPC
+		targetChainId = new(big.Int).SetUint64(uint64(ONE_CHAINID))
+		_ = targetChainId
 
 		originMesonAddr = ETH_MESON
 		originRpcUrl = ETH_RPC
+		originChainId = new(big.Int).SetUint64(uint64(ETH_CHAINID))
 	}
 
 	_ = originMesonAddr
@@ -145,6 +185,7 @@ func callBridge(m Message) error {
 	}
 
 	targetInstance, err := lib.NewMeson(targetMeson, targetClient)
+	_ = targetInstance
 	if err != nil {
 		log.Println("new Meson:", err)
 		return err
@@ -182,10 +223,11 @@ func callBridge(m Message) error {
 	copy(vs[:], byteArray[32:64])
 
 	recipient := common.HexToAddress(m.Recipient)
+	_ = recipient
 	initiator := common.HexToAddress(m.Initiator)
-
-	// send lockswap to target chain
-	auth, err := getAuth(targetClient, fromAddress, privateKey)
+	_ = initiator
+	// send lockswap to origin chain
+	auth, err := getAuth(targetClient, fromAddress, privateKey, targetChainId)
 	if err != nil {
 		log.Println("NewKeyedTransactor:", err)
 		return err
@@ -199,9 +241,13 @@ func callBridge(m Message) error {
 
 	log.Printf("LockSwap %s\n", lockTx.Hash().Hex())
 
+	if !checkTx(lockTx.Hash().Hex(), targetClient) {
+		return errors.New("lockSwap tx failed")
+	}
+
 	//send release tx to target chain
 
-	auth, err = getAuth(targetClient, fromAddress, privateKey)
+	auth, err = getAuth(targetClient, fromAddress, privateKey, targetChainId)
 	if err != nil {
 		log.Println("NewKeyedTransactor:", err)
 		return err
@@ -214,6 +260,10 @@ func callBridge(m Message) error {
 	}
 
 	log.Printf("releaseTx sent: %s\n", releaseTx.Hash().Hex())
+
+	if !checkTx(releaseTx.Hash().Hex(), targetClient) {
+		return errors.New("release tx failed")
+	}
 
 	//send executeSwap tx to origin chain
 
@@ -228,19 +278,23 @@ func callBridge(m Message) error {
 	// log.Printf("originInstance %s error:%s\n", originInstance, err)
 	_ = originInstance
 
-	auth, err = getAuth(originClient, fromAddress, privateKey)
+	auth, err = getAuth(originClient, fromAddress, privateKey, originChainId)
 	if err != nil {
 		log.Println(err)
 		return err
 	}
 
-	executeSwapTx, err := originInstance.DirectExecuteSwap(auth, encodedSwap, r, vs, initiator, recipient)
+	executeSwapTx, err := originInstance.ExecuteSwap(auth, encodedSwap, r, vs, initiator, false)
 	if err != nil {
-		log.Printf("executeSwap error: %s\n", err)
+		log.Printf("executeSwapTx error: %s\n", err)
 		return err
 	}
 
-	fmt.Printf("executeSwap sent: %s\n", executeSwapTx.Hash().Hex())
+	log.Printf("executeSwapTx sent: %s\n", executeSwapTx.Hash().Hex())
+
+	if !checkTx(executeSwapTx.Hash().Hex(), targetClient) {
+		return errors.New("executeSwap tx failed")
+	}
 
 	return nil
 }
