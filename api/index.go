@@ -127,7 +127,7 @@ func getReceiptByTxhash(txhash string, rpcclient *ethclient.Client) bool {
 		log.Printf("TransactionReceipt: %s\n", err)
 		return false
 	}
-	log.Printf("txhash:%s receipt:%s\n", txhash, receipt)
+	log.Printf("txhash:%s receipt blocknum:%s\n", txhash, receipt.BlockNumber)
 	return true
 
 }
