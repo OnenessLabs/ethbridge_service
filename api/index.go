@@ -132,10 +132,10 @@ func getReceiptByTxhash(txhash string, rpcclient *ethclient.Client) bool {
 
 }
 
-func checkTx(txhash string, rpcClient *ethclient.Client) bool {
+func checkTx(txhash string, rpcClient *ethclient.Client, sleep int) bool {
 
 	for i := 1; i <= AttemptLimit; i++ {
-		time.Sleep(time.Second * 3)
+		time.Sleep(time.Second * time.Duration(sleep))
 		ok := getReceiptByTxhash(txhash, rpcClient)
 		if ok {
 			return true
@@ -152,6 +152,8 @@ func callBridge(m Message) error {
 	var originRpcUrl string
 	var originChainId *big.Int
 	var targetChainId *big.Int
+	var targetSleep int
+	var originSleep int
 	if m.TargetChain == "eth" {
 		targetMesonAddr = ETH_MESON
 		targetRpcUrl = ETH_RPC
@@ -162,6 +164,9 @@ func callBridge(m Message) error {
 		originRpcUrl = ONE_RPC
 		originChainId = new(big.Int).SetUint64(uint64(ETH_CHAINID))
 
+		targetSleep = 15
+		originSleep = 3
+
 	} else {
 		targetMesonAddr = ONE_MESON
 		targetRpcUrl = ONE_RPC
@@ -171,6 +176,9 @@ func callBridge(m Message) error {
 		originMesonAddr = ETH_MESON
 		originRpcUrl = ETH_RPC
 		originChainId = new(big.Int).SetUint64(uint64(ETH_CHAINID))
+
+		targetSleep = 3
+		originSleep = 15
 	}
 
 	_ = originMesonAddr
@@ -241,7 +249,7 @@ func callBridge(m Message) error {
 
 	log.Printf("LockSwap %s\n", lockTx.Hash().Hex())
 
-	if !checkTx(lockTx.Hash().Hex(), targetClient) {
+	if !checkTx(lockTx.Hash().Hex(), targetClient, targetSleep) {
 		return errors.New("lockSwap tx failed")
 	}
 
@@ -261,7 +269,7 @@ func callBridge(m Message) error {
 
 	log.Printf("releaseTx sent: %s\n", releaseTx.Hash().Hex())
 
-	if !checkTx(releaseTx.Hash().Hex(), targetClient) {
+	if !checkTx(releaseTx.Hash().Hex(), targetClient, targetSleep) {
 		return errors.New("release tx failed")
 	}
 
@@ -292,7 +300,7 @@ func callBridge(m Message) error {
 
 	log.Printf("executeSwapTx sent: %s\n", executeSwapTx.Hash().Hex())
 
-	if !checkTx(executeSwapTx.Hash().Hex(), targetClient) {
+	if !checkTx(executeSwapTx.Hash().Hex(), originClient, originSleep) {
 		return errors.New("executeSwap tx failed")
 	}
 
