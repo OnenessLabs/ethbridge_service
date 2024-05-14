@@ -105,6 +105,10 @@ func getAuth(client *ethclient.Client, fromAddress common.Address, privateKey *e
 		log.Println(err)
 		return nil, err
 	}
+	gasTipCap, err := client.SuggestGasTipCap(context.Background())
+	if err != nil {
+		gasTipCap = new(big.Int).SetUint64(uint64(0))
+	}
 	log.Println("chainId:", chainId)
 	auth, err := bind.NewKeyedTransactorWithChainID(privateKey, chainId)
 	if err != nil {
@@ -114,7 +118,9 @@ func getAuth(client *ethclient.Client, fromAddress common.Address, privateKey *e
 	auth.Nonce = big.NewInt(int64(targetNonce))
 	auth.Value = big.NewInt(0) // in wei
 	auth.GasLimit = uint64(0)  // in units
+	auth.GasTipCap = gasTipCap
 	auth.GasPrice = targetGasPrice
+	log.Printf("gasPrice: %s gasTipCap:%s\n", targetGasPrice, gasTipCap)
 	return auth, nil
 }
 
@@ -132,9 +138,9 @@ func getReceiptByTxhash(txhash string, rpcclient *ethclient.Client) bool {
 
 }
 
-func checkTx(txhash string, rpcClient *ethclient.Client, sleep int) bool {
+func checkTx(txhash string, rpcClient *ethclient.Client, sleep int, checkNum int) bool {
 
-	for i := 1; i <= AttemptLimit; i++ {
+	for i := 1; i <= checkNum; i++ {
 		time.Sleep(time.Second * time.Duration(sleep))
 		ok := getReceiptByTxhash(txhash, rpcClient)
 		if ok {
@@ -154,6 +160,8 @@ func callBridge(m Message) error {
 	var targetChainId *big.Int
 	var targetSleep int
 	var originSleep int
+	var targetCheckNum int
+	var originCheckNum int
 	if m.TargetChain == "eth" {
 		targetMesonAddr = ETH_MESON
 		targetRpcUrl = ETH_RPC
@@ -165,7 +173,9 @@ func callBridge(m Message) error {
 		originChainId = new(big.Int).SetUint64(uint64(ONE_CHAINID))
 
 		targetSleep = 15
+		targetCheckNum = 5
 		originSleep = 3
+		originCheckNum = 3
 
 	} else {
 		targetMesonAddr = ONE_MESON
@@ -178,7 +188,9 @@ func callBridge(m Message) error {
 		originChainId = new(big.Int).SetUint64(uint64(ETH_CHAINID))
 
 		targetSleep = 3
+		targetCheckNum = 3
 		originSleep = 15
+		originCheckNum = 5
 	}
 
 	_ = originMesonAddr
@@ -249,7 +261,7 @@ func callBridge(m Message) error {
 
 	log.Printf("LockSwap %s\n", lockTx.Hash().Hex())
 
-	if !checkTx(lockTx.Hash().Hex(), targetClient, targetSleep) {
+	if !checkTx(lockTx.Hash().Hex(), targetClient, targetSleep, targetCheckNum) {
 		return errors.New("lockSwap tx failed")
 	}
 
@@ -269,7 +281,7 @@ func callBridge(m Message) error {
 
 	log.Printf("releaseTx sent: %s\n", releaseTx.Hash().Hex())
 
-	if !checkTx(releaseTx.Hash().Hex(), targetClient, targetSleep) {
+	if !checkTx(releaseTx.Hash().Hex(), targetClient, targetSleep, targetCheckNum) {
 		return errors.New("release tx failed")
 	}
 
@@ -300,7 +312,7 @@ func callBridge(m Message) error {
 
 	log.Printf("executeSwapTx sent: %s\n", executeSwapTx.Hash().Hex())
 
-	if !checkTx(executeSwapTx.Hash().Hex(), originClient, originSleep) {
+	if !checkTx(executeSwapTx.Hash().Hex(), originClient, originSleep, originCheckNum) {
 		return errors.New("executeSwap tx failed")
 	}
 
