@@ -101,6 +101,7 @@ func getAuth(client *ethclient.Client, fromAddress common.Address, privateKey *e
 	}
 
 	targetGasPrice, err := client.SuggestGasPrice(context.Background())
+	_ = targetGasPrice
 	if err != nil {
 		log.Println(err)
 		return nil, err
