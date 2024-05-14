@@ -119,8 +119,9 @@ func getAuth(client *ethclient.Client, fromAddress common.Address, privateKey *e
 	auth.Value = big.NewInt(0) // in wei
 	auth.GasLimit = uint64(0)  // in units
 	auth.GasTipCap = gasTipCap
-	auth.GasPrice = targetGasPrice
-	log.Printf("gasPrice: %s gasTipCap:%s\n", targetGasPrice, gasTipCap)
+	// auth.GasPrice = targetGasPrice
+	// log.Printf("gasPrice: %s gasTipCap:%s\n", targetGasPrice, gasTipCap)
+	log.Printf("gasTipCap:%s\n", gasTipCap)
 	return auth, nil
 }
 
