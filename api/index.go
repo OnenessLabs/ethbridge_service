@@ -162,7 +162,7 @@ func callBridge(m Message) error {
 
 		originMesonAddr = ONE_MESON
 		originRpcUrl = ONE_RPC
-		originChainId = new(big.Int).SetUint64(uint64(ETH_CHAINID))
+		originChainId = new(big.Int).SetUint64(uint64(ONE_CHAINID))
 
 		targetSleep = 15
 		originSleep = 3
